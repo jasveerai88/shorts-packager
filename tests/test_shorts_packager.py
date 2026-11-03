@@ -1,9 +1,19 @@
+import io
 import sys
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from shorts_packager import pack, truncate_at_word_boundary, LIMIT
+from shorts_packager import (
+    EmptyTitleError,
+    format_result,
+    grapheme_len,
+    main,
+    pack,
+    truncate_at_word_boundary,
+    LIMIT,
+)
 
 
 class TestShortsPackager(unittest.TestCase):
@@ -57,6 +67,113 @@ class TestShortsPackager(unittest.TestCase):
         self.assertEqual(r["title"], "Simple Title")
         self.assertEqual(r["verdict"], "PASS")
         self.assertIn("Credits:", r["description"])
+
+
+class TestBugFixRegressions(unittest.TestCase):
+    # ---- SP-1: empty/blank title is an ERROR (exit 2), never a PASS ----
+    def test_empty_title_is_error_not_pass(self):
+        with self.assertRaises(EmptyTitleError):
+            pack("")
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["--title", ""])
+        self.assertEqual(code, 2)
+        self.assertIn("empty", err.getvalue().lower())
+
+    def test_blank_and_hashtags_only_title_is_error(self):
+        with self.assertRaises(EmptyTitleError):
+            pack("   ")
+        # Hashtags must not rescue an empty title into a hashtags-only PASS.
+        with self.assertRaises(EmptyTitleError):
+            pack("", "#shorts #cats")
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["--title", "   ", "--hashtags", "#shorts"])
+        self.assertEqual(code, 2)
+
+    def test_hashtags_inside_title_alone_are_error(self):
+        # Mini-fix regression (v0.1.2, SP-1b): hashtags typed INTO --title
+        # itself ("#cats #dogs") used to PASS — hashtags alone are not a
+        # title no matter which argument they arrive in. Same clean error.
+        with self.assertRaises(EmptyTitleError):
+            pack("#cats #dogs")
+        with self.assertRaises(EmptyTitleError):
+            pack("#shorts")
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = main(["--title", "#cats #dogs"])
+        self.assertEqual(code, 2)
+        self.assertIn("hashtags alone are not a title", err.getvalue())
+        # A real title that merely CONTAINS a hashtag keeps passing.
+        r = pack("My cats video #cats")
+        self.assertEqual(r["verdict"], "PASS")
+
+    # ---- SP-2: truncation warning must tell the truth ----
+    def test_single_word_mid_word_cut_warning_is_honest(self):
+        r = pack("a" * 150)
+        self.assertTrue(r["truncated"])
+        self.assertTrue(r["mid_word_cut"])
+        self.assertEqual(r["verdict"], "TRUNCATED")
+        joined = " ".join(r["warnings"])
+        self.assertIn("cut mid-word", joined)
+        self.assertIn("no word boundary available", joined)
+        self.assertNotIn("truncated at a word boundary", joined)
+
+    def test_boundary_truncation_warning_says_boundary(self):
+        title = ("word " * 30).strip()
+        r = pack(title)
+        self.assertTrue(r["truncated"])
+        self.assertFalse(r["mid_word_cut"])
+        self.assertIn("truncated at a word boundary", " ".join(r["warnings"]))
+
+    # ---- SP-3: grapheme-cluster (visible character) counting ----
+    def test_grapheme_len_counts_visible_characters(self):
+        self.assertEqual(grapheme_len("abc"), 3)
+        self.assertEqual(grapheme_len("\U0001F1E8\U0001F1E6"), 1)  # flag: 2 code points, 1 visible char
+        self.assertEqual(
+            grapheme_len("\U0001F468\u200d\U0001F469\u200d\U0001F467"), 1
+        )  # ZWJ family: 5 code points, 1 visible char
+        self.assertEqual(grapheme_len("e\u0301"), 1)  # combining accent: 2 code points, 1 visible char
+        self.assertEqual(grapheme_len("\U0001F44D\U0001F3FD"), 1)  # skin-tone modifier
+        self.assertEqual(grapheme_len("a\U0001F1E8\U0001F1E6b"), 3)
+
+    def test_grapheme_counting_applies_to_100_char_rule(self):
+        flags = "\U0001F1E8\U0001F1E6" * 60  # 120 code points, 60 visible chars
+        r = pack(flags)
+        self.assertFalse(r["truncated"])
+        self.assertEqual(r["verdict"], "PASS")
+        self.assertEqual(r["title_length"], 60)
+        accented = "e\u0301" * 90  # 180 code points, 90 visible chars
+        r2 = pack(accented)
+        self.assertFalse(r2["truncated"])
+        self.assertEqual(r2["title_length"], 90)
+
+    # ---- SP-4: hashtag validation + case-insensitive dedupe ----
+    def test_invalid_hashtags_dropped_and_normalised(self):
+        r = pack("My Title", "# ##double # ___ #ok!")
+        self.assertEqual(r["hashtags_in_title"], ["#double"])
+        self.assertIn("#", r["hashtags_rejected"])
+        self.assertIn("___", " ".join(r["hashtags_rejected"]))
+
+    def test_hashtag_dedupe_case_insensitive_keeps_first(self):
+        r = pack("My Title", "#Cats #cats #CATS #dogs")
+        self.assertEqual(r["hashtags_in_title"], ["#Cats", "#dogs"])
+
+    # ---- SP-5: control characters never reach a printed title ----
+    def test_control_characters_replaced_in_title(self):
+        r = pack("Hello\nWorld\tNow")
+        self.assertNotIn("\n", r["title"])
+        self.assertNotIn("\t", r["title"])
+        self.assertEqual(r["title"], "Hello World Now")
+        self.assertTrue(
+            any("Control characters" in w for w in r["warnings"]), r["warnings"]
+        )
+        title_line = format_result(r).splitlines()[0]
+        self.assertNotIn("\t", title_line)
+
+    def test_control_only_title_is_empty_error(self):
+        with self.assertRaises(EmptyTitleError):
+            pack("\n\t\r")
 
 
 if __name__ == "__main__":

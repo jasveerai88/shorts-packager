@@ -51,10 +51,13 @@ Credits: [add your sources / credits here]
 ## The rules it enforces
 
 - **100-char cap** on the title line (title + hashtags placed in it).
+- **Counting counts what a viewer sees — one visible character = 1.** A flag emoji, a family emoji, a skin-tone emoji, or a letter with a combining accent each count as 1, not as their raw Unicode code points.
 - **Exact title wording** — the tool never rewrites your title to squeeze a hashtag in.
 - **Order preserved** — hashtags fill the title in the order you gave them; once one doesn't fit, it and the rest go to the description.
-- **Over-long title = loud warning, not a silent cut.** If the title alone is already over 100 chars, it is truncated only at a word boundary and the output says `Verdict: TRUNCATED` with a warning telling you to edit the wording yourself. A word is never cut in half silently.
-- Hashtags work with or without the `#`, comma- or space-separated; duplicates are removed.
+- **Over-long title = loud warning, not a silent cut.** If the title alone is already over 100 chars, it is truncated at a word boundary where one exists and the output says `Verdict: TRUNCATED` with a warning telling you to edit the wording yourself. If a single word is longer than the limit, it is cut mid-word — and the warning says exactly that ("cut mid-word — no word boundary available"), never a false word-boundary claim.
+- **Empty title = error.** An empty or blank title exits with code 2 and a clear error message — never a PASS. Hashtags alone are not a title.
+- Hashtags work with or without the `#`, comma- or space-separated; they are normalised to a single leading `#`, invalid hashtags (a bare `#`, punctuation, underscore-only) are ignored with a warning, and duplicates are removed case-insensitively (`#Cats` and `#cats` count once, first form kept).
+- Control characters (newlines, tabs) in a title are replaced with spaces and flagged with a warning — a printed title never contains a raw newline.
 
 Optional: `--hook "Your first description line"` to set the description's hook line (defaults to the title).
 
@@ -64,9 +67,12 @@ Verdicts: `PASS` · `PASS_WITH_OVERFLOW` (some hashtags moved to the description
 
 ```bash
 python3 -m unittest discover -s tests -v
-# 6 tests: short title all fits, long title overflow to description,
+# 16 tests: short title all fits, long title overflow to description,
 # over-long title flagged + word-boundary check, truncate helper,
-# custom hook / bare hashtags, no-hashtags case
+# custom hook / bare hashtags, no-hashtags case, plus regression tests
+# for the v0.1.1 fixes: empty/blank title errors, honest mid-word-cut
+# warnings, grapheme (visible-character) counting, hashtag validation
+# and case-insensitive dedupe, and control-character stripping
 ```
 
 ## Privacy
