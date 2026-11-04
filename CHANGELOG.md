@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0 — 2026-11-03
+Agent-ready release (no behaviour change to the existing human output):
+- `--json` flag: prints one JSON object to stdout capturing the same verdict, numbers and warnings as the human report (tool, version, verdict, final title, grapheme title_length vs the 100 limit, truncated / mid_word_cut flags, hashtags in title / overflow / rejected, hook, description, per-check entries). Exit codes are unchanged in both modes.
+- Error paths in `--json` mode emit `{"error": "<message>"}` as JSON on stdout with the same exit code (2) — never plain text, never a traceback. This covers the empty-title error and argparse usage errors.
+- `SKILL.md` added at repo root: an agent-facing brief (purpose, exact commands incl. `--json`, the full JSON schema, exit codes, honesty rules).
+- README gained a "Use with AI agents" section pointing at `--json` + `SKILL.md`.
+- 5 tests added (22 total, all passing): JSON parses with verdict + key fields, JSON verdict agrees with `pack()`/human mode on the overflow sample, JSON error object + exit 2 for an empty title and for a usage error, and a byte-identical guard on the human output.
+
 ## v0.1.2 — 2026-11-03
 Mini-fix from the delta re-audit:
 - SP-1b: a title consisting ONLY of hashtag tokens (`--title "#cats #dogs"`) now fails with the same clean empty-title error (exit 2) instead of PASSing — hashtags alone are not a title, including when they are typed into the title itself rather than passed via `--hashtags`. v0.1.1 covered the blank-title case; this closes the in-title variant. A real title that merely contains a hashtag is unaffected.

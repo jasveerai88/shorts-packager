@@ -22,10 +22,11 @@ Stdlib only. No network, no files written, no data leaves the machine.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import unicodedata
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 LIMIT = 100
 CREDITS_PLACEHOLDER = "Credits: [add your sources / credits here]"
@@ -330,18 +331,97 @@ def format_result(r: dict) -> str:
     return "\n".join(lines)
 
 
+def result_as_json(r: dict) -> dict:
+    """The pack() result as one JSON-ready object for --json mode.
+
+    Mirrors exactly what format_result() shows a human: the same
+    verdict, the same numbers, the same warnings — nothing added,
+    nothing softened.
+    """
+    return {
+        "tool": "shorts-packager",
+        "version": __version__,
+        "verdict": r["verdict"],
+        "title": r["title"],
+        "title_length": r["title_length"],
+        "limit": r["limit"],
+        "original_title": r["original_title"],
+        "base_title": r["base_title"],
+        "truncated": r["truncated"],
+        "mid_word_cut": r["mid_word_cut"],
+        "hashtags_in_title": r["hashtags_in_title"],
+        "hashtags_overflow": r["hashtags_overflow"],
+        "hashtags_rejected": r["hashtags_rejected"],
+        "hook": r["hook"],
+        "description": r["description"],
+        "checks": [
+            {
+                "name": "Title length",
+                "status": "TRUNCATED" if r["truncated"] else "PASS",
+                "title_length": r["title_length"],
+                "limit": r["limit"],
+                "message": (
+                    f"final title is {r['title_length']}/{r['limit']} "
+                    "visible characters"
+                ),
+            },
+            {
+                "name": "Hashtag placement",
+                "status": "PASS_WITH_OVERFLOW" if r["hashtags_overflow"] else "PASS",
+                "in_title": len(r["hashtags_in_title"]),
+                "overflow_to_description": len(r["hashtags_overflow"]),
+                "rejected": len(r["hashtags_rejected"]),
+                "message": (
+                    f"{len(r['hashtags_in_title'])} hashtag(s) in the title, "
+                    f"{len(r['hashtags_overflow'])} overflow to the description, "
+                    f"{len(r['hashtags_rejected'])} rejected as invalid"
+                ),
+            },
+        ],
+        "warnings": r["warnings"],
+    }
+
+
+class _JsonAwareParser(argparse.ArgumentParser):
+    """ArgumentParser that reports usage errors as JSON in --json mode.
+
+    An agent driving this tool with --json must never be handed plain
+    text or a traceback: a usage error becomes {"error": ...} on
+    stdout with the same exit code (2) argparse would have used.
+    """
+
+    json_mode = False
+
+    def error(self, message):
+        if self.json_mode:
+            print(json.dumps({"error": message}))
+            self.exit(2)
+        super().error(message)
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Fit a YouTube Shorts title into 100 characters.")
+    argv = sys.argv[1:] if argv is None else argv
+    ap = _JsonAwareParser(description="Fit a YouTube Shorts title into 100 characters.")
+    ap.json_mode = "--json" in argv
     ap.add_argument("--title", required=True, help="Video title (exact wording is preserved)")
     ap.add_argument("--hashtags", default="", help='Hashtags, e.g. "#shorts #viral" or "#shorts,#viral"')
     ap.add_argument("--hook", default=None, help="Optional first line for the description")
+    ap.add_argument("--json", action="store_true",
+                    help="Print one JSON object (verdict, checks, warnings) "
+                         "instead of the human-readable report")
     args = ap.parse_args(argv)
     try:
         result = pack(args.title, args.hashtags, hook=args.hook)
     except EmptyTitleError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"error": str(e)}))
+        else:
+            print(f"Error: {e}", file=sys.stderr)
         return 2
-    print(format_result(result))
+    if args.json:
+        print(json.dumps(result_as_json(result), indent=2, ensure_ascii=False))
+    else:
+        print(format_result(result))
     return 0
 
 

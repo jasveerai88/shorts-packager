@@ -1,4 +1,5 @@
 import io
+import json
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -7,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from shorts_packager import (
     EmptyTitleError,
+    __version__,
     format_result,
     grapheme_len,
     main,
@@ -174,6 +176,81 @@ class TestBugFixRegressions(unittest.TestCase):
     def test_control_only_title_is_empty_error(self):
         with self.assertRaises(EmptyTitleError):
             pack("\n\t\r")
+
+
+class TestJsonMode(unittest.TestCase):
+    """v0.2.0 agent-ready mode: --json emits one JSON object whose
+    verdict agrees with human mode; errors are JSON objects, exit 2."""
+
+    def _run_json(self, argv):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(argv)
+        return code, json.loads(out.getvalue())
+
+    def test_json_parses_with_verdict_and_key_fields(self):
+        code, data = self._run_json(
+            ["--title", "Cats React to Cucumbers",
+             "--hashtags", "#shorts #cats #funny", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(data["tool"], "shorts-packager")
+        self.assertEqual(data["version"], __version__)
+        self.assertEqual(data["verdict"], "PASS")
+        self.assertEqual(data["title_length"], 44)
+        self.assertEqual(data["limit"], LIMIT)
+        self.assertEqual(data["hashtags_in_title"],
+                         ["#shorts", "#cats", "#funny"])
+        self.assertEqual(data["hashtags_overflow"], [])
+        self.assertEqual(data["warnings"], [])
+        self.assertTrue(data["checks"])
+        for c in data["checks"]:
+            self.assertIn("name", c)
+            self.assertIn("status", c)
+            self.assertIn("message", c)
+
+    def test_json_verdict_agrees_with_pack_and_human(self):
+        title = ("This Goalkeeper Made The Most Impossible Save You Will "
+                 "Ever See In Football History")
+        tags = "#shorts #football #goalkeeper #viral #amazing"
+        code, data = self._run_json(
+            ["--title", title, "--hashtags", tags, "--json"])
+        expected = pack(title, tags)
+        self.assertEqual(code, 0)
+        self.assertEqual(data["verdict"], expected["verdict"])
+        self.assertEqual(data["verdict"], "PASS_WITH_OVERFLOW")
+        self.assertEqual(data["hashtags_overflow"],
+                         expected["hashtags_overflow"])
+        self.assertEqual(data["title"], expected["title"])
+        self.assertEqual(data["description"], expected["description"])
+
+    def test_json_error_case_is_json_object_exit2(self):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(["--title", "", "--json"])
+        self.assertEqual(code, 2)
+        data = json.loads(out.getvalue())  # must parse — never plain text
+        self.assertIn("title is empty", data["error"])
+        self.assertNotIn("Verdict", out.getvalue())
+
+    def test_json_usage_error_is_json_object_exit2(self):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                main(["--json"])  # missing required --title
+        self.assertEqual(cm.exception.code, 2)
+        data = json.loads(out.getvalue())
+        self.assertIn("error", data)
+
+    def test_human_output_byte_identical_without_json(self):
+        argv = ["--title", "Cats React to Cucumbers",
+                "--hashtags", "#shorts #cats #funny"]
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(argv)
+        self.assertEqual(code, 0)
+        expected = format_result(
+            pack("Cats React to Cucumbers", "#shorts #cats #funny")) + "\n"
+        self.assertEqual(out.getvalue(), expected)
 
 
 if __name__ == "__main__":

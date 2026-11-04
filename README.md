@@ -63,11 +63,20 @@ Optional: `--hook "Your first description line"` to set the description's hook l
 
 Verdicts: `PASS` · `PASS_WITH_OVERFLOW` (some hashtags moved to the description) · `TRUNCATED` (title itself was too long).
 
+## Use with AI agents
+
+Driving this from a coding agent (Claude Code, Codex, …)? Add `--json`:
+stdout becomes one JSON object with the verdict, the final title, the
+grapheme length vs the 100 limit, hashtag placement, the description,
+and the same warnings the human report shows. Errors in `--json` mode
+are JSON too — `{"error": "..."}` with exit code 2. Full brief for
+agents, including the JSON schema and exit codes: [SKILL.md](SKILL.md).
+
 ## Tests
 
 ```bash
 python3 -m unittest discover -s tests -v
-# 16 tests: short title all fits, long title overflow to description,
+# 22 tests: short title all fits, long title overflow to description,
 # over-long title flagged + word-boundary check, truncate helper,
 # custom hook / bare hashtags, no-hashtags case, plus regression tests
 # for the v0.1.1 fixes: empty/blank title errors, honest mid-word-cut
